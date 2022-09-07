@@ -1,0 +1,112 @@
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using VShopping.Web.Services;
+using VShopping.Web.Services.Interfaces;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+builder.Services.AddControllersWithViews();
+
+//Http Client
+
+//builder.Services.AddHttpClient("ProductAPI", config =>
+//{
+  //  config.BaseAddress = new Uri("https://localhost:7040/api/products/");
+    //config.Timeout = new TimeSpan(0, 0, 30);
+    //config.DefaultRequestHeaders.Clear();
+//});
+
+builder.Services.AddHttpClient("ProductAPI", x =>
+{
+    x.BaseAddress = new Uri(builder.Configuration["ServiceUri:ProductAPI"]);
+});
+
+
+//Identity para se comunicar com a Web
+builder.Services.AddAuthentication(opt =>
+{
+    opt.DefaultScheme = "Cookies";
+    opt.DefaultChallengeScheme = "oidc";
+})
+    .AddCookie("Cookies", c => {
+    c.ExpireTimeSpan = TimeSpan.FromMinutes(10);
+        c.Events = new CookieAuthenticationEvents()
+        {
+            OnRedirectToAccessDenied = (context) =>
+            {
+                context.HttpContext.Response.Redirect(builder.Configuration["ServiceUri:IdentityServer"] + "/Account/AccessDenied");
+                return Task.CompletedTask;
+            }
+        };
+    
+    } )
+
+    .AddOpenIdConnect("oidc", options =>
+    {
+        options.Events.OnRemoteFailure = context =>
+        {
+            context.Response.Redirect("/");
+            context.HandleResponse();
+
+            return Task.FromResult(0);
+        };
+
+        options.Authority = builder.Configuration["ServiceUri:IdentityServer"];
+        options.GetClaimsFromUserInfoEndpoint = true;
+        options.ClientId = "vshopping";
+        options.ClientSecret = builder.Configuration["Client:Secret"];
+        options.ResponseType = "code";
+        options.ClaimActions.MapJsonKey("role", "role", "role");
+        options.ClaimActions.MapJsonKey("sub", "sub", "sub");
+        options.TokenValidationParameters.NameClaimType = "name";
+        options.TokenValidationParameters.RoleClaimType = "role";
+        options.Scope.Add("vshopping");
+        options.SaveTokens = true;
+
+    });
+builder.Services.AddHttpClient<IProductService, ProductService>("ProductAPI", c =>
+{
+    c.BaseAddress = new Uri(builder.Configuration["ServiceUri:ProductAPI"]);
+    c.DefaultRequestHeaders.Add("Connection", "Keep-Alive");
+    c.DefaultRequestHeaders.Add("Keep-Alive", "3600");
+    c.DefaultRequestHeaders.Add("User-Agent", "HttpClientFactory-ProductAPI");
+});
+
+
+builder.Services.AddHttpClient<ICartService, CartService>("CartApi",
+    c => c.BaseAddress = new Uri(builder.Configuration["ServiceUri:CartApi"]));
+
+builder.Services.AddHttpClient<ICouponService, CouponService>("DiscountApi", c =>
+   c.BaseAddress = new Uri(builder.Configuration["ServiceUri:DiscountApi"])
+);
+
+builder.Services.AddScoped<ICouponService, CouponService>();
+builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddScoped<ICategoryService, CategoryService>();
+builder.Services.AddScoped<ICartService, CartService>();
+
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Home/Error");
+    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
+    app.UseHsts();
+}
+
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+
+app.UseRouting();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller=Home}/{action=Index}/{id?}");
+
+app.Run();
